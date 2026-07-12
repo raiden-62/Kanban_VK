@@ -5,9 +5,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import Card, CardPriority, User
-from app.schemas.card import CardCreate, CardMove, CardRead, CardUpdate
+from app.schemas.card import CardCreate, CardLabelsUpdate, CardMove, CardRead, CardUpdate
+from app.schemas.label import LabelRead
 from app.services.card_filters import CardFilters, build_card_query
-from app.services.labels import get_labels_for_board
+from app.services.labels import get_label_for_board_or_404, get_labels_for_board
 from app.services.ordering import insert_card, move_card, normalize_card_positions
 from app.services.permissions import (
     ensure_user_is_board_member,
@@ -117,6 +118,70 @@ def update_card(
         card.labels = get_labels_for_board(db, board_id, update_data.pop("label_ids"))
     for field, value in update_data.items():
         setattr(card, field, value)
+    db.commit()
+    db.refresh(card)
+    return card
+
+
+@router.get("/{card_id}/labels", response_model=list[LabelRead])
+def list_card_labels(
+    board_id: int,
+    card_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_viewer(db, board_id, current_user)
+    card = get_card_for_board_or_404(db, board_id, card_id)
+    return sorted(card.labels, key=lambda label: (label.title, label.id))
+
+
+@router.put("/{card_id}/labels", response_model=CardRead)
+def replace_card_labels(
+    board_id: int,
+    card_id: int,
+    payload: CardLabelsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Card:
+    require_editor(db, board_id, current_user)
+    card = get_card_for_board_or_404(db, board_id, card_id)
+    card.labels = get_labels_for_board(db, board_id, payload.label_ids)
+    db.commit()
+    db.refresh(card)
+    return card
+
+
+@router.post("/{card_id}/labels/{label_id}", response_model=CardRead)
+def add_card_label(
+    board_id: int,
+    card_id: int,
+    label_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Card:
+    require_editor(db, board_id, current_user)
+    card = get_card_for_board_or_404(db, board_id, card_id)
+    label = get_label_for_board_or_404(db, board_id, label_id)
+    if label not in card.labels:
+        card.labels.append(label)
+    db.commit()
+    db.refresh(card)
+    return card
+
+
+@router.delete("/{card_id}/labels/{label_id}", response_model=CardRead)
+def remove_card_label(
+    board_id: int,
+    card_id: int,
+    label_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Card:
+    require_editor(db, board_id, current_user)
+    card = get_card_for_board_or_404(db, board_id, card_id)
+    label = get_label_for_board_or_404(db, board_id, label_id)
+    if label in card.labels:
+        card.labels.remove(label)
     db.commit()
     db.refresh(card)
     return card

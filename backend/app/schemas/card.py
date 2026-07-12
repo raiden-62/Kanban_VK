@@ -34,6 +34,10 @@ class CardMove(BaseModel):
     position: int = Field(ge=0)
 
 
+class CardLabelsUpdate(BaseModel):
+    label_ids: list[int] = Field(default_factory=list)
+
+
 class CardRead(CardBase):
     id: int
     board_id: int

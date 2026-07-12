@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models import Board, BoardMember, BoardRole, User
+from app.models import Board, BoardMember, BoardRole, Card, Column, Label, User
 from app.schemas.board import BoardCreate, BoardRead, BoardUpdate
+from app.schemas.kanban import KanbanRead
 from app.services.permissions import get_board_or_404, require_owner, require_viewer
 
 
@@ -37,6 +38,33 @@ def create_board(
     db.commit()
     db.refresh(board)
     return board
+
+
+@router.get("/{board_id}/kanban", response_model=KanbanRead)
+def get_kanban(
+    board_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> KanbanRead:
+    require_viewer(db, board_id, current_user)
+    board = get_board_or_404(db, board_id)
+    columns = db.scalars(
+        select(Column).where(Column.board_id == board_id).order_by(Column.position, Column.id)
+    ).all()
+    cards = db.scalars(
+        select(Card)
+        .options(selectinload(Card.labels))
+        .where(Card.board_id == board_id)
+        .order_by(Card.column_id, Card.position, Card.id)
+    ).all()
+    labels = db.scalars(select(Label).where(Label.board_id == board_id).order_by(Label.title, Label.id)).all()
+    members = db.scalars(
+        select(BoardMember)
+        .options(joinedload(BoardMember.user))
+        .where(BoardMember.board_id == board_id)
+        .order_by(BoardMember.id)
+    ).all()
+    return KanbanRead(board=board, columns=columns, cards=cards, labels=labels, members=members)
 
 
 @router.get("/{board_id}", response_model=BoardRead)
@@ -76,4 +104,3 @@ def delete_board(
     board = get_board_or_404(db, board_id)
     db.delete(board)
     db.commit()
-

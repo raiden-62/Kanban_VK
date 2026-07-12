@@ -159,5 +159,42 @@ def test_card_priority_labels_filters_and_overdue_cards(client: TestClient) -> N
     assert updated_labels.json()["priority"] == "high"
     assert [label["id"] for label in updated_labels.json()["labels"]] == [backend["id"]]
 
-    assert owner["login"] == "owner"
+    listed_labels = client.get(
+        f"/api/tables/{board['id']}/cards/{critical['id']}/labels",
+        headers=viewer_headers,
+    )
+    assert listed_labels.status_code == 200
+    assert {label["id"] for label in listed_labels.json()} == {bug["id"], backend["id"]}
 
+    removed_label = client.delete(
+        f"/api/tables/{board['id']}/cards/{critical['id']}/labels/{bug['id']}",
+        headers=editor_headers,
+    )
+    assert removed_label.status_code == 200
+    assert {label["id"] for label in removed_label.json()["labels"]} == {backend["id"]}
+
+    added_label = client.post(
+        f"/api/tables/{board['id']}/cards/{critical['id']}/labels/{bug['id']}",
+        headers=editor_headers,
+    )
+    assert added_label.status_code == 200
+    assert {label["id"] for label in added_label.json()["labels"]} == {bug["id"], backend["id"]}
+
+    replaced_labels = client.put(
+        f"/api/tables/{board['id']}/cards/{critical['id']}/labels",
+        json={"label_ids": [bug["id"]]},
+        headers=editor_headers,
+    )
+    assert replaced_labels.status_code == 200
+    assert [label["id"] for label in replaced_labels.json()["labels"]] == [bug["id"]]
+
+    kanban = client.get(f"/api/tables/{board['id']}/kanban", headers=viewer_headers)
+    assert kanban.status_code == 200
+    kanban_body = kanban.json()
+    assert kanban_body["board"]["id"] == board["id"]
+    assert {column["id"] for column in kanban_body["columns"]} == {todo["id"], done["id"]}
+    assert {card["id"] for card in kanban_body["cards"]} == {critical["id"], medium["id"], done_overdue["id"]}
+    assert {label["id"] for label in kanban_body["labels"]} == {bug["id"], backend["id"]}
+    assert {member["user"]["login"] for member in kanban_body["members"]} == {"owner", "editor", "viewer"}
+
+    assert owner["login"] == "owner"

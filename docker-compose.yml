@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      KANBAN_DATABASE_URL: sqlite:////data/kanban.db
+      KANBAN_SECRET_KEY: dev-compose-secret-change-later
+    volumes:
+      - kanban_data:/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8550:8550"
+    environment:
+      KANBAN_API_BASE_URL: http://backend:8000/api
+      KANBAN_FLET_HOST: 0.0.0.0
+      KANBAN_FLET_PORT: "8550"
+      KANBAN_FLET_VIEW: flet_app_web
+    depends_on:
+      - backend
+
+volumes:
+  kanban_data:

@@ -25,8 +25,8 @@ def show_info(page: ft.Page, message: str) -> None:
     page.show_dialog(snack_bar)
 
 
-def primary_button(text: str, on_click: Callable, icon: str | None = None) -> ft.ElevatedButton:
-    return ft.ElevatedButton(
+def primary_button(text: str, on_click: Callable, icon: str | None = None) -> ft.Button:
+    return ft.Button(
         content=text,
         icon=icon,
         on_click=on_click,

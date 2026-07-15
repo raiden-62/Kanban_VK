@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -14,8 +15,14 @@ class ApiError(RuntimeError):
 
 
 class ApiClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:8000/api") -> None:
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None = None) -> None:
+        resolved_base_url = (
+            base_url
+            or os.getenv("KANBAN_API_BASE_URL")
+            or os.getenv("API_BASE_URL")
+            or "http://127.0.0.1:8000/api"
+        )
+        self.base_url = resolved_base_url.rstrip("/")
         self.token: str | None = None
 
     def set_token(self, token: str | None) -> None:

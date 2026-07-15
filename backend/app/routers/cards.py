@@ -114,6 +114,7 @@ def update_card(
     update_data = payload.model_dump(exclude_unset=True)
     if "assignee_id" in update_data:
         ensure_user_is_board_member(db, board_id, update_data["assignee_id"])
+        card.assignee_removed = False
     if "label_ids" in update_data:
         card.labels = get_labels_for_board(db, board_id, update_data.pop("label_ids"))
     for field, value in update_data.items():

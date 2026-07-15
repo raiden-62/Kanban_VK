@@ -42,6 +42,7 @@ class CardRead(CardBase):
     id: int
     board_id: int
     column_id: int
+    assignee_removed: bool = False
     position: int
     created_at: datetime
     updated_at: datetime

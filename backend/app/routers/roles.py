@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models import BoardMember, BoardRole, User
+from app.models import BoardMember, BoardRole, Card, User
 from app.schemas.role import RoleCreate, RoleRead, RoleUpdate
 from app.services.permissions import get_membership, require_owner, require_viewer
 
@@ -97,6 +97,10 @@ def delete_role(
     if membership.role == BoardRole.owner:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Board owner cannot be removed")
 
+    db.execute(
+        update(Card)
+        .where(Card.board_id == board_id, Card.assignee_id == user_id)
+        .values(assignee_id=None, assignee_removed=True)
+    )
     db.delete(membership)
     db.commit()
-

@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from tests.helpers import add_role, create_board, create_column, login_user, register_user
+from tests.helpers import add_role, create_board, create_card, create_column, login_user, register_user
 
 
 def test_board_crud_and_owner_membership(client: TestClient) -> None:
@@ -88,10 +88,27 @@ def test_board_role_permissions(client: TestClient) -> None:
 
     created_by_promoted_user = create_column(client, viewer_headers, board["id"], "После повышения")
     assert created_by_promoted_user["title"] == "После повышения"
+    assigned_card = create_card(
+        client,
+        owner_headers,
+        board["id"],
+        created_by_promoted_user["id"],
+        "Назначена удаляемому участнику",
+        assignee_id=viewer["id"],
+    )
+    assert assigned_card["assignee_id"] == viewer["id"]
+    assert assigned_card["assignee_removed"] is False
 
     role_delete = client.delete(f"/api/tables/{board['id']}/roles/{viewer['id']}", headers=owner_headers)
     assert role_delete.status_code == 204
     assert client.get(f"/api/tables/{board['id']}", headers=viewer_headers).status_code == 403
+    unassigned_card = client.get(
+        f"/api/tables/{board['id']}/cards/{assigned_card['id']}",
+        headers=owner_headers,
+    )
+    assert unassigned_card.status_code == 200
+    assert unassigned_card.json()["assignee_id"] is None
+    assert unassigned_card.json()["assignee_removed"] is True
 
     # Keep the variable used so a future refactor does not remove the editor scenario accidentally.
     assert editor["login"] == "editor"

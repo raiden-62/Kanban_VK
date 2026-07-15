@@ -37,7 +37,21 @@ ROLE_LABELS = {
     "viewer": "Наблюдатель",
 }
 
+LABEL_COLORS = [
+    {"title": "Синий", "color": "#2787F5"},
+    {"title": "Голубой", "color": "#18A0FB"},
+    {"title": "Бирюзовый", "color": "#00A6A6"},
+    {"title": "Зеленый", "color": "#22A06B"},
+    {"title": "Лайм", "color": "#7CB342"},
+    {"title": "Желтый", "color": "#F2C94C"},
+    {"title": "Оранжевый", "color": "#F59E0B"},
+    {"title": "Красный", "color": "#E64646"},
+    {"title": "Розовый", "color": "#E91E63"},
+    {"title": "Фиолетовый", "color": "#8E44AD"},
+    {"title": "Индиго", "color": "#5B5FC7"},
+    {"title": "Серый", "color": "#7B8794"},
+]
+
 
 def priority_color(priority: str | None) -> str:
     return getattr(PALETTE, priority or "medium", PALETTE.medium)
-

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -17,6 +17,7 @@ class Card(Base):
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    assignee_removed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
     priority: Mapped[CardPriority] = mapped_column(
         Enum(CardPriority, values_callable=lambda obj: [priority.value for priority in obj]),

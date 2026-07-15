@@ -62,6 +62,7 @@ def sample_board(owner_id: int = 1) -> dict[str, Any]:
 def make_frontend(role: str) -> KanbanFrontend:
     frontend = KanbanFrontend.__new__(KanbanFrontend)
     frontend.state = AppState()
+    frontend.state.token = "token"
     frontend.state.current_board_id = 1
     frontend.state.current_user = {"id": 1, "login": "user"}
     frontend.state.kanban = {
@@ -71,6 +72,8 @@ def make_frontend(role: str) -> KanbanFrontend:
         "labels": [],
         "members": [{"user": {"id": 1, "login": "user"}, "role": role}],
     }
+    frontend.focused_field_ids = set()
+    frontend.poll_refresh_in_progress = False
     return frontend
 
 
@@ -113,6 +116,16 @@ class RecordingApi:
 
     def delete_board(self, board_id: int) -> None:
         self.calls.append(("delete_board", board_id))
+
+    def get_kanban(self, board_id: int) -> dict[str, Any]:
+        self.calls.append(("get_kanban", board_id))
+        return {
+            "board": sample_board(),
+            "columns": [sample_column()],
+            "cards": [{**sample_card(), "title": "Updated"}],
+            "labels": [],
+            "members": [{"user": {"id": 1, "login": "user"}, "role": "editor"}],
+        }
 
     def update_role(self, board_id: int, user_id: int, role: str) -> dict[str, Any]:
         self.calls.append(("update_role", board_id, user_id, role))
@@ -174,6 +187,48 @@ def test_flet_view_can_be_configured_from_environment(monkeypatch: Any) -> None:
     monkeypatch.setenv("KANBAN_FLET_VIEW", "flet_app_web")
 
     assert app_view_from_env() == ft.AppView.FLET_APP_WEB
+
+
+def test_focus_tracking_marks_and_clears_focused_fields() -> None:
+    frontend = make_frontend("editor")
+    field = ft.TextField(label="Название")
+    dropdown = ft.Dropdown(label="Исполнитель")
+    control = ft.Column(controls=[field, dropdown])
+
+    frontend.attach_focus_tracking(control)
+    field.on_focus(FakeEvent(field))
+    dropdown.on_focus(FakeEvent(dropdown))
+
+    assert frontend.focused_field_ids == {id(field), id(dropdown)}
+
+    field.on_blur(FakeEvent(field))
+    dropdown.on_blur(FakeEvent(dropdown))
+
+    assert frontend.focused_field_ids == set()
+
+
+def test_polling_skips_refresh_when_a_field_is_focused() -> None:
+    frontend = make_frontend("editor")
+    frontend.api = RecordingApi()
+    frontend.render_board = lambda: None
+    frontend.focused_field_ids.add(123)
+
+    frontend.poll_current_board_once()
+
+    assert frontend.api.calls == []
+
+
+def test_polling_refreshes_open_board_when_no_field_is_focused() -> None:
+    frontend = make_frontend("editor")
+    frontend.api = RecordingApi()
+    renders: list[str] = []
+    frontend.render_board = lambda: renders.append("render")
+
+    frontend.poll_current_board_once()
+
+    assert frontend.api.calls == [("get_kanban", 1)]
+    assert frontend.state.kanban["cards"][0]["title"] == "Updated"
+    assert renders == ["render"]
 
 
 def test_board_list_shows_board_actions_only_for_owned_boards() -> None:
@@ -347,14 +402,26 @@ def test_non_owner_cannot_open_board_edit_or_delete_dialogs() -> None:
 
 
 def test_viewer_card_control_hides_move_buttons() -> None:
-    control = card_control(sample_card(), lambda _: None, lambda _: None, lambda _: None, can_edit=False)
+    control = card_control(sample_card(), lambda _: None, can_edit=False)
 
     assert "IconButton" not in control_names(control)
 
 
+def test_editor_card_control_hides_legacy_move_buttons() -> None:
+    control = card_control(sample_card(), lambda _: None, can_edit=True)
+
+    icons = [
+        item.icon
+        for item in walk(control)
+        if isinstance(item, ft.IconButton)
+    ]
+    assert ft.Icons.CHEVRON_LEFT not in icons
+    assert ft.Icons.CHEVRON_RIGHT not in icons
+
+
 def test_removed_assignee_is_rendered_on_card() -> None:
     card = {**sample_card(), "assignee_removed": True}
-    control = card_control(card, lambda _: None, lambda _: None, lambda _: None, can_edit=False)
+    control = card_control(card, lambda _: None, can_edit=False)
 
     texts = [control.value for control in walk(control) if isinstance(control, ft.Text)]
     assert "Пользователь удален" in texts
@@ -425,8 +492,6 @@ def test_viewer_column_control_hides_add_edit_delete_controls() -> None:
         lambda _: None,
         lambda _: None,
         lambda _: None,
-        lambda _: None,
-        lambda _: None,
         lambda *_: None,
         can_edit=False,
     )
@@ -445,8 +510,6 @@ def test_editor_column_control_keeps_add_edit_delete_controls() -> None:
         lambda _: None,
         lambda _: None,
         lambda _: None,
-        lambda _: None,
-        lambda _: None,
         lambda *_: None,
         can_edit=True,
     )
@@ -461,8 +524,6 @@ def test_editor_column_control_has_draggable_cards_and_drop_targets() -> None:
     control = column_control(
         sample_column(),
         [sample_card()],
-        lambda _: None,
-        lambda _: None,
         lambda _: None,
         lambda _: None,
         lambda _: None,

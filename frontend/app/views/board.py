@@ -163,8 +163,6 @@ class BoardViewMixin:
                         self.open_create_card_dialog,
                         self.open_edit_column_dialog,
                         self.open_delete_column_dialog,
-                        self.move_card_left,
-                        self.move_card_right,
                         self.drop_card,
                         can_edit,
                     ),

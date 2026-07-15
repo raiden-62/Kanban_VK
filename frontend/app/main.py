@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+from typing import Any, Iterator
 
 import flet as ft
 
@@ -18,11 +20,14 @@ from frontend.app.views.dialogs import DialogsMixin
 class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixin):
     TEST_LOGIN = "testuser"
     TEST_PASSWORD = "123123123"
+    KANBAN_REFRESH_INTERVAL_SECONDS = 1.0
 
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         self.api = ApiClient()
         self.state = AppState()
+        self.focused_field_ids: set[int] = set()
+        self.poll_refresh_in_progress = False
 
         self.page.title = "VK Kanban"
         self.page.bgcolor = PALETTE.app_bg
@@ -32,12 +37,80 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
         self.page.window_min_height = 720
 
     def run(self) -> None:
+        self.page.run_task(self.poll_kanban_updates)
         self.render_auth()
 
     def render(self, control: ft.Control) -> None:
+        self.focused_field_ids.clear()
+        self.attach_focus_tracking(control)
         self.page.controls.clear()
         self.page.add(control)
         self.page.update()
+
+    def iter_controls(self, control: Any) -> Iterator[Any]:
+        if control is None or isinstance(control, str):
+            return
+        yield control
+
+        child = getattr(control, "content", None)
+        if child is not None:
+            yield from self.iter_controls(child)
+
+        for attr in ("controls", "items", "actions"):
+            children = getattr(control, attr, None)
+            if children:
+                for child_control in children:
+                    yield from self.iter_controls(child_control)
+
+    def attach_focus_tracking(self, control: ft.Control) -> None:
+        for item in self.iter_controls(control):
+            if isinstance(item, (ft.TextField, ft.Dropdown, ft.Checkbox)):
+                self.track_focusable_control(item)
+
+    def track_focusable_control(self, control: ft.Control) -> None:
+        original_focus = getattr(control, "on_focus", None)
+        original_blur = getattr(control, "on_blur", None)
+
+        def on_focus(event: ft.ControlEvent, original_handler: Any = original_focus) -> None:
+            self.focused_field_ids.add(id(control))
+            if original_handler is not None:
+                original_handler(event)
+
+        def on_blur(event: ft.ControlEvent, original_handler: Any = original_blur) -> None:
+            self.focused_field_ids.discard(id(control))
+            if original_handler is not None:
+                original_handler(event)
+
+        control.on_focus = on_focus
+        control.on_blur = on_blur
+
+    async def poll_kanban_updates(self) -> None:
+        while True:
+            await asyncio.sleep(self.KANBAN_REFRESH_INTERVAL_SECONDS)
+            self.poll_current_board_once()
+
+    def should_poll_current_board(self) -> bool:
+        return (
+            self.state.is_authenticated
+            and self.state.current_board_id is not None
+            and self.state.kanban is not None
+            and not self.focused_field_ids
+            and not self.poll_refresh_in_progress
+        )
+
+    def poll_current_board_once(self) -> None:
+        if not self.should_poll_current_board():
+            return
+        self.poll_refresh_in_progress = True
+        try:
+            self.state.kanban = self.api.get_kanban(self.state.current_board_id)
+            if self.state.selected_card_id is not None and self.state.selected_card is None:
+                self.state.selected_card_id = None
+            self.render_board()
+        except ApiError:
+            return
+        finally:
+            self.poll_refresh_in_progress = False
 
     def handle_api_error(self, error: ApiError) -> None:
         show_error(self.page, str(error))

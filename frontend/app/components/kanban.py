@@ -30,8 +30,6 @@ def label_chip(label: dict) -> ft.Container:
 def card_control(
     card: dict,
     on_open: Callable[[int], None],
-    on_move_left: Callable[[dict], None],
-    on_move_right: Callable[[dict], None],
     can_edit: bool,
 ) -> ft.Control:
     chips = [priority_chip(card.get("priority", "medium"))]
@@ -44,30 +42,6 @@ def card_control(
         footer.append(ft.Text("Пользователь удален", size=12, color=PALETTE.danger))
     elif card.get("assignee_id"):
         footer.append(ft.Text(f"Исполнитель #{card['assignee_id']}", size=12, color=PALETTE.text_muted))
-
-    header_controls: list[ft.Control] = [
-        ft.Text(card["title"], size=14, weight=ft.FontWeight.W_600, expand=True)
-    ]
-    if can_edit:
-        header_controls.append(
-            ft.Row(
-                spacing=0,
-                controls=[
-                    ft.IconButton(
-                        icon=ft.Icons.CHEVRON_LEFT,
-                        tooltip="Переместить влево",
-                        icon_size=16,
-                        on_click=lambda event: on_move_left(card),
-                    ),
-                    ft.IconButton(
-                        icon=ft.Icons.CHEVRON_RIGHT,
-                        tooltip="Переместить вправо",
-                        icon_size=16,
-                        on_click=lambda event: on_move_right(card),
-                    ),
-                ],
-            )
-        )
 
     card_body = ft.Container(
         data=card["id"],
@@ -82,7 +56,9 @@ def card_control(
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.START,
-                    controls=header_controls,
+                    controls=[
+                        ft.Text(card["title"], size=14, weight=ft.FontWeight.W_600, expand=True)
+                    ],
                 ),
                 ft.Row(spacing=4, wrap=True, controls=chips),
                 *footer,
@@ -146,8 +122,6 @@ def column_control(
     on_add_card: Callable[[int], None],
     on_edit_column: Callable[[dict], None],
     on_delete_column: Callable[[dict], None],
-    on_move_left: Callable[[dict], None],
-    on_move_right: Callable[[dict], None],
     on_drop_card: Callable[[int, int, int | None, str], None],
     can_edit: bool,
 ) -> ft.Control:
@@ -187,7 +161,7 @@ def column_control(
         if cards:
             card_controls.append(drop_zone(column["id"], None, on_drop_card, "top"))
             for index, card in enumerate(cards):
-                card_controls.append(card_control(card, on_open_card, on_move_left, on_move_right, can_edit))
+                card_controls.append(card_control(card, on_open_card, can_edit))
                 card_controls.append(
                     drop_zone(
                         column["id"],
@@ -201,7 +175,7 @@ def column_control(
             card_controls.append(drop_zone(column["id"], None, on_drop_card, "end", height=80))
     else:
         card_controls = [
-            card_control(card, on_open_card, on_move_left, on_move_right, can_edit)
+            card_control(card, on_open_card, can_edit)
             for card in cards
         ]
 

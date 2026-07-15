@@ -358,9 +358,11 @@ class DialogsMixin:
         self.open_dialog(dialog)
 
     def open_dialog(self, dialog: ft.AlertDialog) -> None:
+        self.attach_focus_tracking(dialog)
         self.page.show_dialog(dialog)
 
     def close_dialog(self, dialog: ft.AlertDialog) -> None:
+        self.focused_field_ids.clear()
         dialog.open = False
         self.page.pop_dialog()
 

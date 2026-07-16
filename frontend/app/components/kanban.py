@@ -124,6 +124,8 @@ def column_control(
     on_delete_column: Callable[[dict], None],
     on_drop_card: Callable[[int, int, int | None, str], None],
     can_edit: bool,
+    height: int | None = None,
+    on_scroll_activity: Callable[[], None] | None = None,
 ) -> ft.Control:
     header_controls: list[ft.Control] = [ft.Text(column["title"], size=15, weight=ft.FontWeight.W_600, expand=True)]
     if can_edit:
@@ -181,11 +183,13 @@ def column_control(
 
     column_body = ft.Container(
         width=300,
+        height=height,
         bgcolor=PALETTE.surface_muted,
         border=border_all(1, PALETTE.border),
         border_radius=8,
         padding=10,
         content=ft.Column(
+            expand=True,
             spacing=10,
             controls=[
                 ft.Row(
@@ -193,8 +197,10 @@ def column_control(
                     controls=header_controls,
                 ),
                 ft.Column(
+                    expand=True,
                     spacing=8,
                     scroll=ft.ScrollMode.AUTO,
+                    on_scroll=(lambda _: on_scroll_activity()) if on_scroll_activity is not None else None,
                     controls=card_controls,
                 ),
             ],

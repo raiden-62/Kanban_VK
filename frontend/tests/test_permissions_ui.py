@@ -74,6 +74,7 @@ def make_frontend(role: str) -> KanbanFrontend:
     }
     frontend.focused_field_ids = set()
     frontend.poll_refresh_in_progress = False
+    frontend.polling_paused_until = 0.0
     frontend.card_panel_scroll_offset = 0.0
     frontend.pending_card_panel_scroll_control = None
     frontend.card_panel_has_unsaved_changes = False
@@ -200,6 +201,12 @@ def test_flet_view_can_be_configured_from_environment(monkeypatch: Any) -> None:
     assert app_view_from_env() == ft.AppView.FLET_APP_WEB
 
 
+def test_flet_web_browser_view_can_be_configured_from_environment(monkeypatch: Any) -> None:
+    monkeypatch.setenv("KANBAN_FLET_VIEW", "web_browser")
+
+    assert app_view_from_env() == ft.AppView.WEB_BROWSER
+
+
 def test_focus_tracking_marks_and_clears_focused_fields() -> None:
     frontend = make_frontend("editor")
     field = ft.TextField(label="Название")
@@ -249,6 +256,17 @@ def test_polling_skips_refresh_when_card_panel_has_unsaved_changes() -> None:
     frontend.state.selected_card_id = 10
     frontend.card_panel_has_unsaved_changes = True
 
+    frontend.poll_current_board_once()
+
+    assert frontend.api.calls == []
+
+
+def test_polling_skips_refresh_while_temporarily_paused() -> None:
+    frontend = make_frontend("editor")
+    frontend.api = RecordingApi()
+    frontend.render_board = lambda: None
+
+    frontend.pause_polling(3.0)
     frontend.poll_current_board_once()
 
     assert frontend.api.calls == []
@@ -571,6 +589,75 @@ def test_editor_column_control_has_draggable_cards_and_drop_targets() -> None:
     controls = list(walk(control))
     assert any(isinstance(control, ft.Draggable) for control in controls)
     assert sum(isinstance(control, ft.DragTarget) for control in controls) == 2
+
+
+def test_column_control_uses_bounded_scrollable_card_area() -> None:
+    control = column_control(
+        sample_column(),
+        [sample_card()],
+        lambda _: None,
+        lambda _: None,
+        lambda _: None,
+        lambda _: None,
+        lambda *_: None,
+        can_edit=True,
+        height=620,
+    )
+
+    controls = list(walk(control))
+    column_body = [
+        item
+        for item in controls
+        if isinstance(item, ft.Container) and item.width == 300
+    ][0]
+    scroll_columns = [
+        item
+        for item in controls
+        if isinstance(item, ft.Column) and item.scroll == ft.ScrollMode.AUTO
+    ]
+    assert column_body.height == 620
+    assert scroll_columns[0].expand is True
+
+
+def test_column_scroll_activity_callback_is_called() -> None:
+    pauses: list[str] = []
+    control = column_control(
+        sample_column(),
+        [sample_card()],
+        lambda _: None,
+        lambda _: None,
+        lambda _: None,
+        lambda _: None,
+        lambda *_: None,
+        can_edit=True,
+        height=620,
+        on_scroll_activity=lambda: pauses.append("pause"),
+    )
+
+    scroll_column = [
+        item
+        for item in walk(control)
+        if isinstance(item, ft.Column) and item.scroll == ft.ScrollMode.AUTO
+    ][0]
+    scroll_column.on_scroll(FakeEvent(scroll_column))
+
+    assert pauses == ["pause"]
+
+
+def test_board_horizontal_scroll_pauses_polling() -> None:
+    frontend = make_frontend("editor")
+    frontend.state.kanban["columns"] = [sample_column()]
+    frontend.render = lambda control: setattr(frontend, "rendered_control", control)
+
+    frontend.render_board()
+    board_row = [
+        control
+        for control in walk(frontend.rendered_control)
+        if isinstance(control, ft.Row) and control.scroll == ft.ScrollMode.AUTO
+    ][0]
+    board_row.on_scroll(FakeEvent(board_row))
+
+    assert frontend.polling_paused_until > 0.0
 
 
 def test_viewer_card_panel_is_read_only_and_hides_write_actions() -> None:

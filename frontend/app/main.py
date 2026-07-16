@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 from typing import Any, Iterator
 
 import flet as ft
@@ -21,7 +22,8 @@ from frontend.app.views.dialogs import DialogsMixin
 class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixin):
     TEST_LOGIN = "testuser"
     TEST_PASSWORD = "123123123"
-    KANBAN_REFRESH_INTERVAL_SECONDS = 1.0
+    KANBAN_REFRESH_INTERVAL_SECONDS = 3.0
+    POLLING_SCROLL_PAUSE_SECONDS = 3.0
 
     def __init__(self, page: ft.Page) -> None:
         self.page = page
@@ -29,6 +31,7 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
         self.state = AppState()
         self.focused_field_ids: set[int] = set()
         self.poll_refresh_in_progress = False
+        self.polling_paused_until = 0.0
         self.card_panel_scroll_offset = 0.0
         self.pending_card_panel_scroll_control: ft.Column | None = None
         self.card_panel_has_unsaved_changes = False
@@ -121,7 +124,12 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
             and not self.card_panel_has_unsaved_changes
             and not self.focused_field_ids
             and not self.poll_refresh_in_progress
+            and time.monotonic() >= self.polling_paused_until
         )
+
+    def pause_polling(self, seconds: float | None = None) -> None:
+        pause_seconds = seconds if seconds is not None else self.POLLING_SCROLL_PAUSE_SECONDS
+        self.polling_paused_until = max(self.polling_paused_until, time.monotonic() + pause_seconds)
 
     def poll_current_board_once(self) -> None:
         if not self.should_poll_current_board():
@@ -175,6 +183,7 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
     def logout(self) -> None:
         self.api.set_token(None)
         self.state.clear_session()
+        self.polling_paused_until = 0.0
         self.card_panel_scroll_offset = 0.0
         self.card_panel_has_unsaved_changes = False
         self.render_auth()

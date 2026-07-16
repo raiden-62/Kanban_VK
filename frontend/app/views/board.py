@@ -15,6 +15,8 @@ from frontend.app.theme import PALETTE, PRIORITY_LABELS
 
 
 class BoardViewMixin:
+    BOARD_LANE_HEIGHT = 620
+
     def load_kanban(self, board_id: int) -> None:
         try:
             self.state.current_board_id = board_id
@@ -70,8 +72,10 @@ class BoardViewMixin:
                     controls=[
                         self.overdue_banner(overdue_cards),
                         ft.Row(
+                            expand=True,
                             spacing=0,
                             scroll=ft.ScrollMode.AUTO,
+                            on_scroll=lambda _: self.pause_polling(),
                             vertical_alignment=ft.CrossAxisAlignment.START,
                             controls=column_controls,
                         ),
@@ -170,6 +174,8 @@ class BoardViewMixin:
                         self.open_delete_column_dialog,
                         self.drop_card,
                         can_edit,
+                        height=self.BOARD_LANE_HEIGHT,
+                        on_scroll_activity=self.pause_polling,
                     ),
                 )
             )
@@ -190,7 +196,7 @@ class BoardViewMixin:
     def column_separator(self) -> ft.Container:
         return ft.Container(
             width=1,
-            height=620,
+            height=self.BOARD_LANE_HEIGHT,
             bgcolor=PALETTE.border,
         )
 
@@ -199,7 +205,7 @@ class BoardViewMixin:
             width=300,
             padding=padding_symmetric(horizontal=8, vertical=0),
             content=ft.Container(
-                height=620,
+                height=self.BOARD_LANE_HEIGHT,
                 bgcolor=PALETTE.surface,
                 border=border_all(1, PALETTE.border),
                 border_radius=8,

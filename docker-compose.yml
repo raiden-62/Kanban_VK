@@ -21,7 +21,8 @@ services:
       KANBAN_API_BASE_URL: http://backend:8000/api
       KANBAN_FLET_HOST: 0.0.0.0
       KANBAN_FLET_PORT: "8550"
-      KANBAN_FLET_VIEW: flet_app_web
+      KANBAN_FLET_VIEW: web_browser
+      FLET_FORCE_WEB_SERVER: "true"
     depends_on:
       - backend
 

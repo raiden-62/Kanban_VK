@@ -66,6 +66,13 @@ def test_columns_cards_moves_assignment_deadline_and_comments(client: TestClient
     assert updated.json()["description"] == "Подробное описание"
     assert updated.json()["deadline"] == "2026-08-01"
 
+    kanban_after_deadline = client.get(f"/api/tables/{board['id']}/kanban", headers=viewer_headers)
+    assert kanban_after_deadline.status_code == 200
+    assert any(
+        card["id"] == first["id"] and card["deadline"] == "2026-08-01"
+        for card in kanban_after_deadline.json()["cards"]
+    )
+
     invalid_assignee = client.patch(
         f"/api/tables/{board['id']}/cards/{first['id']}",
         json={"assignee_id": stranger["id"]},

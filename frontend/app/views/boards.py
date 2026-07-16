@@ -43,6 +43,8 @@ class BoardsViewMixin:
             self.state.kanban = None
             self.state.selected_card_id = None
             self.state.filters = {}
+            self.card_panel_scroll_offset = 0.0
+            self.card_panel_has_unsaved_changes = False
             self.state.boards = self.api.list_boards()
             self.render_boards()
         except ApiError as error:
@@ -210,6 +212,8 @@ class BoardsViewMixin:
                     self.state.kanban = None
                     self.state.selected_card_id = None
                     self.state.filters = {}
+                    self.card_panel_scroll_offset = 0.0
+                    self.card_panel_has_unsaved_changes = False
                 self.load_boards()
             except ApiError as error:
                 self.handle_api_error(error)

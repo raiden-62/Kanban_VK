@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 from typing import Any, Iterator
 
@@ -28,6 +29,9 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
         self.state = AppState()
         self.focused_field_ids: set[int] = set()
         self.poll_refresh_in_progress = False
+        self.card_panel_scroll_offset = 0.0
+        self.pending_card_panel_scroll_control: ft.Column | None = None
+        self.card_panel_has_unsaved_changes = False
 
         self.page.title = "VK Kanban"
         self.page.bgcolor = PALETTE.app_bg
@@ -46,6 +50,26 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
         self.page.controls.clear()
         self.page.add(control)
         self.page.update()
+        self.restore_card_panel_scroll()
+
+    def restore_card_panel_scroll(self) -> None:
+        control = self.pending_card_panel_scroll_control
+        self.pending_card_panel_scroll_control = None
+        if control is None:
+            return
+        if self.card_panel_scroll_offset > 0:
+            page = getattr(self, "page", None)
+            if page is not None:
+                page.run_task(self.restore_card_panel_scroll_async, control, self.card_panel_scroll_offset)
+                return
+            result = control.scroll_to(offset=self.card_panel_scroll_offset, duration=0)
+            if inspect.isawaitable(result):
+                result.close()
+
+    async def restore_card_panel_scroll_async(self, control: ft.Column, offset: float) -> None:
+        result = control.scroll_to(offset=offset, duration=0)
+        if inspect.isawaitable(result):
+            await result
 
     def iter_controls(self, control: Any) -> Iterator[Any]:
         if control is None or isinstance(control, str):
@@ -94,6 +118,7 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
             self.state.is_authenticated
             and self.state.current_board_id is not None
             and self.state.kanban is not None
+            and not self.card_panel_has_unsaved_changes
             and not self.focused_field_ids
             and not self.poll_refresh_in_progress
         )
@@ -106,6 +131,8 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
             self.state.kanban = self.api.get_kanban(self.state.current_board_id)
             if self.state.selected_card_id is not None and self.state.selected_card is None:
                 self.state.selected_card_id = None
+                self.card_panel_scroll_offset = 0.0
+                self.card_panel_has_unsaved_changes = False
             self.render_board()
         except ApiError:
             return
@@ -148,6 +175,8 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
     def logout(self) -> None:
         self.api.set_token(None)
         self.state.clear_session()
+        self.card_panel_scroll_offset = 0.0
+        self.card_panel_has_unsaved_changes = False
         self.render_auth()
 
 

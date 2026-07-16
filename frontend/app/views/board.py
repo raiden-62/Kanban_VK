@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from calendar import monthrange
+from datetime import date, datetime
 from typing import Any
 
 import flet as ft
@@ -19,6 +20,8 @@ class BoardViewMixin:
             self.state.current_board_id = board_id
             self.state.kanban = self.api.get_kanban(board_id)
             self.state.selected_card_id = None
+            self.card_panel_scroll_offset = 0.0
+            self.card_panel_has_unsaved_changes = False
             self.render_board()
         except ApiError as error:
             self.handle_api_error(error)
@@ -78,6 +81,8 @@ class BoardViewMixin:
         ]
         if selected_card is not None:
             board_controls.append(self.card_panel(selected_card, labels, columns, can_edit))
+        else:
+            self.card_panel_has_unsaved_changes = False
 
         board_body = ft.Row(
             expand=True,
@@ -311,9 +316,109 @@ class BoardViewMixin:
             if card.get("assignee_removed")
             else ft.Container(height=0)
         )
-        deadline = text_field("Дедлайн YYYY-MM-DD")
-        deadline.value = card.get("deadline") or ""
-        deadline.read_only = not can_edit
+        deadline_value = {"value": card.get("deadline") or ""}
+        deadline_text = ft.Text(
+            deadline_value["value"] or "Не задан",
+            color=PALETTE.text if deadline_value["value"] else PALETTE.text_muted,
+        )
+
+        def parse_deadline(value: str | None) -> date | None:
+            if not value:
+                return None
+            try:
+                return datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError:
+                return None
+
+        def set_deadline(value: str) -> None:
+            deadline_value["value"] = value
+            card["deadline"] = value or None
+            deadline_text.value = value or "Не задан"
+            deadline_text.color = PALETTE.text if value else PALETTE.text_muted
+            update_card_dirty_state()
+            self.page.update()
+
+        def open_deadline_picker(_: ft.ControlEvent) -> None:
+            if not can_edit:
+                return
+            selected = parse_deadline(deadline_value["value"]) or date.today()
+            year = ft.Dropdown(
+                label="Год",
+                value=str(selected.year),
+                width=120,
+                options=[ft.dropdown.Option(str(item)) for item in range(2020, 2036)],
+            )
+            month = ft.Dropdown(
+                label="Месяц",
+                value=f"{selected.month:02d}",
+                width=120,
+                options=[ft.dropdown.Option(f"{item:02d}") for item in range(1, 13)],
+            )
+            day = ft.Dropdown(label="День", value=f"{selected.day:02d}", width=120)
+
+            def update_days(_: ft.ControlEvent | None = None) -> None:
+                max_day = monthrange(int(year.value), int(month.value))[1]
+                current_day = min(int(day.value or "1"), max_day)
+                day.options = [ft.dropdown.Option(f"{item:02d}") for item in range(1, max_day + 1)]
+                day.value = f"{current_day:02d}"
+                self.page.update()
+
+            year.on_change = update_days
+            month.on_change = update_days
+            update_days()
+
+            def choose_deadline(_: ft.ControlEvent) -> None:
+                set_deadline(f"{year.value}-{month.value}-{day.value}")
+                self.close_dialog(dialog)
+
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Выбрать дедлайн"),
+                content=ft.Row(spacing=8, controls=[day, month, year]),
+                actions=[
+                    ghost_button("Отмена", lambda _: self.close_dialog(dialog)),
+                    primary_button("Выбрать", choose_deadline, ft.Icons.CHECK),
+                ],
+            )
+            self.open_dialog(dialog)
+
+        def clear_deadline(_: ft.ControlEvent) -> None:
+            if not can_edit:
+                return
+            set_deadline("")
+
+        deadline_controls = ft.Row(
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Container(
+                    data="deadline_display",
+                    expand=True,
+                    border=border_all(1, PALETTE.border),
+                    border_radius=6,
+                    padding=12,
+                    content=ft.Column(
+                        spacing=2,
+                        controls=[
+                            ft.Text("Дедлайн", size=12, color=PALETTE.text_muted),
+                            deadline_text,
+                        ],
+                    ),
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.CALENDAR_MONTH,
+                    tooltip="Выбрать дедлайн",
+                    disabled=not can_edit,
+                    on_click=open_deadline_picker,
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.CLEAR,
+                    tooltip="Очистить дедлайн",
+                    disabled=not can_edit,
+                    on_click=clear_deadline,
+                ),
+            ],
+        )
         priority = ft.Dropdown(
             label="Приоритет",
             value=card.get("priority", "medium"),
@@ -331,17 +436,51 @@ class BoardViewMixin:
             for label in labels
         ]
 
-        def save(_: ft.ControlEvent) -> None:
-            payload = {
+        initial_payload = {
+            "title": card["title"],
+            "description": card.get("description") or None,
+            "assignee_id": card.get("assignee_id"),
+            "deadline": card.get("deadline") or None,
+            "priority": card.get("priority", "medium"),
+            "label_ids": sorted(selected_label_ids),
+        }
+        save_button: ft.Button | None = None
+
+        def current_card_payload() -> dict[str, Any]:
+            return {
                 "title": title.value,
                 "description": description.value or None,
                 "assignee_id": int(assignee.value) if assignee.value != "none" else None,
-                "deadline": deadline.value or None,
+                "deadline": deadline_value["value"] or None,
                 "priority": priority.value,
-                "label_ids": [checkbox.data for checkbox in label_checks if checkbox.value],
+                "label_ids": sorted(checkbox.data for checkbox in label_checks if checkbox.value),
             }
+
+        def update_card_dirty_state(update_page: bool = False) -> None:
+            is_dirty = can_edit and current_card_payload() != initial_payload
+            self.card_panel_has_unsaved_changes = is_dirty
+            if save_button is not None:
+                save_button.disabled = not is_dirty
+            if update_page:
+                self.page.update()
+
+        def mark_card_dirty(_: ft.ControlEvent) -> None:
+            update_card_dirty_state(update_page=True)
+
+        title.on_change = mark_card_dirty
+        description.on_change = mark_card_dirty
+        assignee.on_change = mark_card_dirty
+        priority.on_change = mark_card_dirty
+        for checkbox in label_checks:
+            checkbox.on_change = mark_card_dirty
+
+        def save(_: ft.ControlEvent) -> None:
+            if can_edit and not self.card_panel_has_unsaved_changes:
+                return
+            payload = current_card_payload()
             try:
                 self.api.update_card(self.state.current_board_id, card["id"], payload)
+                self.card_panel_has_unsaved_changes = False
                 self.refresh_kanban()
             except (ApiError, ValueError) as error:
                 show_error(self.page, str(error))
@@ -368,14 +507,17 @@ class BoardViewMixin:
 
         action_controls: list[ft.Control] = []
         if can_edit:
+            save_button = primary_button("Сохранить", save, ft.Icons.SAVE)
+            save_button.disabled = True
             action_controls.append(
                 ft.Row(
                     controls=[
-                        primary_button("Сохранить", save, ft.Icons.SAVE),
+                        save_button,
                         ghost_button("Удалить", delete, ft.Icons.DELETE),
                     ]
                 )
             )
+            update_card_dirty_state()
         comment_controls: list[ft.Control] = []
         if can_edit:
             comment_controls.extend(
@@ -385,49 +527,56 @@ class BoardViewMixin:
                 ]
             )
 
+        def remember_card_panel_scroll(event: ft.OnScrollEvent) -> None:
+            self.card_panel_scroll_offset = max(0.0, float(event.pixels))
+
+        panel_content = ft.Column(
+            expand=True,
+            scroll=ft.ScrollMode.AUTO,
+            spacing=12,
+            on_scroll=remember_card_panel_scroll,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Text("Карточка", size=18, weight=ft.FontWeight.W_700),
+                        ft.IconButton(icon=ft.Icons.CLOSE, tooltip="Закрыть", on_click=lambda _: self.close_card()),
+                    ],
+                ),
+                title,
+                description,
+                assignee,
+                assignee_status,
+                deadline_controls,
+                priority,
+                ft.Text("Метки", weight=ft.FontWeight.W_600),
+                ft.Column(spacing=2, controls=label_checks) if label_checks else ft.Text("Меток нет", color=PALETTE.text_muted),
+                *action_controls,
+                ft.Divider(),
+                ft.Text("Комментарии", weight=ft.FontWeight.W_600),
+                ft.Column(
+                    spacing=6,
+                    controls=[
+                        ft.Container(
+                            bgcolor=PALETTE.surface_muted,
+                            border_radius=6,
+                            padding=8,
+                            content=ft.Text(comment["text"]),
+                        )
+                        for comment in comments
+                    ],
+                ),
+                *comment_controls,
+            ],
+        )
+        self.pending_card_panel_scroll_control = panel_content
+
         return ft.Container(
             width=390,
             bgcolor=PALETTE.surface,
             border=border_only(left=ft.BorderSide(1, PALETTE.border)),
             padding=16,
-            content=ft.Column(
-                expand=True,
-                scroll=ft.ScrollMode.AUTO,
-                spacing=12,
-                controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text("Карточка", size=18, weight=ft.FontWeight.W_700),
-                            ft.IconButton(icon=ft.Icons.CLOSE, tooltip="Закрыть", on_click=lambda _: self.close_card()),
-                        ],
-                    ),
-                    title,
-                    description,
-                    assignee,
-                    assignee_status,
-                    deadline,
-                    priority,
-                    ft.Text("Метки", weight=ft.FontWeight.W_600),
-                    ft.Column(spacing=2, controls=label_checks) if label_checks else ft.Text("Меток нет", color=PALETTE.text_muted),
-                    *action_controls,
-                    ft.Divider(),
-                    ft.Text("Комментарии", weight=ft.FontWeight.W_600),
-                    ft.Column(
-                        spacing=6,
-                        controls=[
-                            ft.Container(
-                                bgcolor=PALETTE.surface_muted,
-                                border_radius=6,
-                                padding=8,
-                                content=ft.Text(comment["text"]),
-                            )
-                            for comment in comments
-                        ],
-                    ),
-                    *comment_controls,
-                ],
-            ),
+            content=panel_content,
         )
 
     def load_comments_for_panel(self, card_id: int) -> list[dict[str, Any]]:
@@ -437,11 +586,18 @@ class BoardViewMixin:
             return []
 
     def open_card(self, card_id: int) -> None:
+        if self.state.selected_card_id == card_id:
+            return
+        if self.state.selected_card_id != card_id:
+            self.card_panel_scroll_offset = 0.0
+            self.card_panel_has_unsaved_changes = False
         self.state.selected_card_id = card_id
         self.render_board()
 
     def close_card(self) -> None:
         self.state.selected_card_id = None
+        self.card_panel_scroll_offset = 0.0
+        self.card_panel_has_unsaved_changes = False
         self.render_board()
 
     def move_card_left(self, card: dict[str, Any]) -> None:

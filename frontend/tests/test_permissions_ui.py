@@ -74,6 +74,9 @@ def make_frontend(role: str) -> KanbanFrontend:
     }
     frontend.focused_field_ids = set()
     frontend.poll_refresh_in_progress = False
+    frontend.card_panel_scroll_offset = 0.0
+    frontend.pending_card_panel_scroll_control = None
+    frontend.card_panel_has_unsaved_changes = False
     return frontend
 
 
@@ -81,20 +84,28 @@ class FakePage:
     def __init__(self) -> None:
         self.dialog: ft.AlertDialog | None = None
         self.update_count = 0
+        self.tasks: list[tuple[Any, tuple[Any, ...]]] = []
 
     def show_dialog(self, dialog: ft.AlertDialog) -> None:
+        dialog.open = True
         self.dialog = dialog
 
     def pop_dialog(self) -> None:
+        if self.dialog is not None:
+            self.dialog.open = False
         self.dialog = None
 
     def update(self) -> None:
         self.update_count += 1
 
+    def run_task(self, handler: Any, *args: Any) -> None:
+        self.tasks.append((handler, args))
+
 
 class FakeEvent:
-    def __init__(self, control: Any | None = None) -> None:
+    def __init__(self, control: Any | None = None, data: Any | None = None) -> None:
         self.control = control
+        self.data = data
 
 
 class RecordingApi:
@@ -212,6 +223,31 @@ def test_polling_skips_refresh_when_a_field_is_focused() -> None:
     frontend.api = RecordingApi()
     frontend.render_board = lambda: None
     frontend.focused_field_ids.add(123)
+
+    frontend.poll_current_board_once()
+
+    assert frontend.api.calls == []
+
+
+def test_polling_refreshes_when_clean_card_panel_is_open() -> None:
+    frontend = make_frontend("editor")
+    frontend.api = RecordingApi()
+    renders: list[str] = []
+    frontend.render_board = lambda: renders.append("render")
+    frontend.state.selected_card_id = 10
+
+    frontend.poll_current_board_once()
+
+    assert frontend.api.calls == [("get_kanban", 1)]
+    assert renders == ["render"]
+
+
+def test_polling_skips_refresh_when_card_panel_has_unsaved_changes() -> None:
+    frontend = make_frontend("editor")
+    frontend.api = RecordingApi()
+    frontend.render_board = lambda: None
+    frontend.state.selected_card_id = 10
+    frontend.card_panel_has_unsaved_changes = True
 
     frontend.poll_current_board_once()
 
@@ -567,6 +603,56 @@ def test_removed_assignee_is_rendered_on_card_panel() -> None:
     assert "Пользователь удален" in texts
 
 
+def test_card_panel_remembers_scroll_offset() -> None:
+    frontend = make_frontend("editor")
+    frontend.load_comments_for_panel = lambda _: []
+
+    panel = frontend.card_panel(sample_card(), [], [], can_edit=True)
+    scroll_column = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.Column) and control.on_scroll is not None
+    ][0]
+    scroll_column.on_scroll(
+        ft.OnScrollEvent(
+            "scroll",
+            scroll_column,
+            ft.ScrollType.UPDATE,
+            pixels=128.5,
+            min_scroll_extent=0,
+            max_scroll_extent=500,
+            viewport_dimension=300,
+        )
+    )
+
+    assert frontend.card_panel_scroll_offset == 128.5
+
+
+def test_card_panel_scroll_is_restored_after_render() -> None:
+    frontend = make_frontend("editor")
+    frontend.page = FakePage()
+    column = ft.Column()
+    frontend.pending_card_panel_scroll_control = column
+    frontend.card_panel_scroll_offset = 72.0
+
+    frontend.restore_card_panel_scroll()
+
+    assert frontend.page.tasks == [(frontend.restore_card_panel_scroll_async, (column, 72.0))]
+    assert frontend.pending_card_panel_scroll_control is None
+
+
+def test_opening_different_card_resets_card_panel_scroll() -> None:
+    frontend = make_frontend("editor")
+    frontend.state.selected_card_id = 10
+    frontend.card_panel_scroll_offset = 80.0
+    frontend.render_board = lambda: None
+
+    frontend.open_card(11)
+
+    assert frontend.card_panel_scroll_offset == 0.0
+    assert frontend.state.selected_card_id == 11
+
+
 def test_card_panel_assignee_dropdown_lists_board_members() -> None:
     frontend = make_frontend("editor")
     frontend.state.kanban["members"].append({"user": {"id": 2, "login": "member"}, "role": "viewer"})
@@ -587,9 +673,101 @@ def test_card_panel_assignee_dropdown_lists_board_members() -> None:
     ]
 
 
+def test_card_panel_deadline_dialog_updates_display_and_card_state() -> None:
+    frontend = make_frontend("editor")
+    frontend.page = FakePage()
+    frontend.load_comments_for_panel = lambda _: []
+    card = sample_card()
+
+    panel = frontend.card_panel(card, [], [], can_edit=True)
+    controls = list(walk(panel))
+    deadline_display = [
+        control
+        for control in controls
+        if isinstance(control, ft.Container) and control.data == "deadline_display"
+    ][0]
+    calendar_button = [
+        control
+        for control in controls
+        if isinstance(control, ft.IconButton) and control.icon == ft.Icons.CALENDAR_MONTH
+    ][0]
+    clear_button = [
+        control
+        for control in controls
+        if isinstance(control, ft.IconButton) and control.icon == ft.Icons.CLEAR
+    ][0]
+    save_button = [
+        control
+        for control in controls
+        if isinstance(control, ft.Button) and control.content == "Сохранить"
+    ][0]
+
+    assert any(isinstance(control, ft.Text) and control.value == "Не задан" for control in walk(deadline_display))
+    assert save_button.disabled is True
+    assert frontend.card_panel_has_unsaved_changes is False
+
+    calendar_button.on_click(None)
+    assert isinstance(frontend.page.dialog, ft.AlertDialog)
+
+    dropdowns = [
+        control
+        for control in walk(frontend.page.dialog.content)
+        if isinstance(control, ft.Dropdown)
+    ]
+    by_label = {control.label: control for control in dropdowns}
+    by_label["День"].value = "15"
+    by_label["Месяц"].value = "08"
+    by_label["Год"].value = "2026"
+    frontend.page.dialog.actions[1].on_click(None)
+    assert any(isinstance(control, ft.Text) and control.value == "2026-08-15" for control in walk(deadline_display))
+    assert card["deadline"] == "2026-08-15"
+    assert frontend.page.dialog is None
+    assert save_button.disabled is False
+    assert frontend.card_panel_has_unsaved_changes is True
+
+    clear_button.on_click(None)
+    assert any(isinstance(control, ft.Text) and control.value == "Не задан" for control in walk(deadline_display))
+    assert card["deadline"] is None
+    assert save_button.disabled is True
+    assert frontend.card_panel_has_unsaved_changes is False
+
+
+def test_card_panel_save_button_enables_for_text_changes() -> None:
+    frontend = make_frontend("editor")
+    frontend.page = FakePage()
+    frontend.load_comments_for_panel = lambda _: []
+
+    panel = frontend.card_panel(sample_card(), [], [], can_edit=True)
+    title = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.TextField) and control.label == "Название"
+    ][0]
+    save_button = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.Button) and control.content == "Сохранить"
+    ][0]
+
+    assert save_button.disabled is True
+
+    title.value = "Changed"
+    title.on_change(FakeEvent(title))
+
+    assert save_button.disabled is False
+    assert frontend.card_panel_has_unsaved_changes is True
+
+    title.value = "Task"
+    title.on_change(FakeEvent(title))
+
+    assert save_button.disabled is True
+    assert frontend.card_panel_has_unsaved_changes is False
+
+
 def test_card_panel_saves_selected_assignee_from_dropdown() -> None:
     frontend = make_frontend("editor")
     frontend.state.kanban["members"].append({"user": {"id": 2, "login": "member"}, "role": "viewer"})
+    frontend.page = FakePage()
     frontend.api = RecordingApi()
     frontend.load_comments_for_panel = lambda _: []
     refreshes: list[str] = []
@@ -602,6 +780,22 @@ def test_card_panel_saves_selected_assignee_from_dropdown() -> None:
         if isinstance(control, ft.Dropdown) and control.label == "Исполнитель"
     ][0]
     assignee.value = "2"
+    calendar_button = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.IconButton) and control.icon == ft.Icons.CALENDAR_MONTH
+    ][0]
+    calendar_button.on_click(None)
+    dropdowns = [
+        control
+        for control in walk(frontend.page.dialog.content)
+        if isinstance(control, ft.Dropdown)
+    ]
+    by_label = {control.label: control for control in dropdowns}
+    by_label["День"].value = "15"
+    by_label["Месяц"].value = "08"
+    by_label["Год"].value = "2026"
+    frontend.page.dialog.actions[1].on_click(None)
     save_button = [
         control
         for control in walk(panel)
@@ -618,7 +812,7 @@ def test_card_panel_saves_selected_assignee_from_dropdown() -> None:
                 "title": "Task",
                 "description": "Description",
                 "assignee_id": 2,
-                "deadline": None,
+                "deadline": "2026-08-15",
                 "priority": "medium",
                 "label_ids": [],
             },

@@ -8,7 +8,7 @@ import flet as ft
 from frontend.app.api_client import ApiError
 from frontend.app.components.common import ghost_button, primary_button, show_error, text_field
 from frontend.app.components.kanban import label_chip
-from frontend.app.flet_compat import border_all
+from frontend.app.flet_compat import border_all, sync_control_value
 from frontend.app.theme import LABEL_COLORS, PALETTE, PRIORITY_LABELS, ROLE_LABELS
 
 
@@ -133,6 +133,7 @@ class DialogsMixin:
                 ft.dropdown.Option("viewer", ROLE_LABELS["viewer"]),
             ],
         )
+        role.on_select = sync_control_value
 
         def add_member(_: ft.ControlEvent) -> None:
             if not login.value:
@@ -200,6 +201,7 @@ class DialogsMixin:
         )
 
         def update_member_role(event: ft.ControlEvent) -> None:
+            sync_control_value(event)
             try:
                 updated_member = self.api.update_role(self.state.current_board_id, user_id, event.control.value)
                 if self.state.kanban is not None:
@@ -228,6 +230,7 @@ class DialogsMixin:
             except ApiError as error:
                 self.handle_api_error(error)
 
+        role_dropdown.on_select = update_member_role
         role_dropdown.on_change = update_member_role
         return ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -329,6 +332,8 @@ class DialogsMixin:
             options=[ft.dropdown.Option("", "Любая")]
             + [ft.dropdown.Option(str(item["id"]), item["title"]) for item in labels],
         )
+        priority.on_select = sync_control_value
+        label.on_select = sync_control_value
         overdue = ft.Checkbox(label="Только просроченные", value=bool(filters.get("overdue")))
 
         def apply(_: ft.ControlEvent) -> None:

@@ -6,7 +6,7 @@ import flet as ft
 
 from frontend.app.api_client import ApiError
 from frontend.app.components.common import ghost_button, primary_button, show_error, text_field
-from frontend.app.flet_compat import border_all
+from frontend.app.flet_compat import border_all, sync_control_value
 from frontend.app.theme import PALETTE
 
 
@@ -65,6 +65,7 @@ class BoardsViewMixin:
                     for key, item in BOARD_PRESETS.items()
                 ],
             )
+            preset.on_select = sync_control_value
 
             def create(_: ft.ControlEvent) -> None:
                 if not title.value:

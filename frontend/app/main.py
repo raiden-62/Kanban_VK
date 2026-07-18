@@ -131,12 +131,26 @@ class KanbanFrontend(AuthViewMixin, BoardsViewMixin, BoardViewMixin, DialogsMixi
         pause_seconds = seconds if seconds is not None else self.POLLING_SCROLL_PAUSE_SECONDS
         self.polling_paused_until = max(self.polling_paused_until, time.monotonic() + pause_seconds)
 
+    def can_apply_polled_board(self, board_id: int) -> bool:
+        return (
+            self.state.is_authenticated
+            and self.state.current_board_id == board_id
+            and self.state.kanban is not None
+            and not self.card_panel_has_unsaved_changes
+            and not self.focused_field_ids
+            and time.monotonic() >= self.polling_paused_until
+        )
+
     def poll_current_board_once(self) -> None:
         if not self.should_poll_current_board():
             return
         self.poll_refresh_in_progress = True
         try:
-            self.state.kanban = self.api.get_kanban(self.state.current_board_id)
+            board_id = self.state.current_board_id
+            polled_kanban = self.api.get_kanban(board_id)
+            if not self.can_apply_polled_board(board_id):
+                return
+            self.state.kanban = polled_kanban
             if self.state.selected_card_id is not None and self.state.selected_card is None:
                 self.state.selected_card_id = None
                 self.card_panel_scroll_offset = 0.0

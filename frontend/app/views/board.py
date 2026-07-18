@@ -10,7 +10,7 @@ from frontend.app.api_client import ApiError
 from frontend.app.components.common import ghost_button, primary_button, show_error, text_field
 from frontend.app.components.kanban import column_control
 from frontend.app.drag_drop import calculate_drop_position
-from frontend.app.flet_compat import border_all, border_only, padding_symmetric
+from frontend.app.flet_compat import border_all, border_only, padding_symmetric, sync_control_value
 from frontend.app.theme import PALETTE, PRIORITY_LABELS
 
 
@@ -362,13 +362,17 @@ class BoardViewMixin:
             )
             day = ft.Dropdown(label="День", value=f"{selected.day:02d}", width=120)
 
-            def update_days(_: ft.ControlEvent | None = None) -> None:
+            def update_days(event: ft.ControlEvent | None = None) -> None:
+                sync_control_value(event)
                 max_day = monthrange(int(year.value), int(month.value))[1]
                 current_day = min(int(day.value or "1"), max_day)
                 day.options = [ft.dropdown.Option(f"{item:02d}") for item in range(1, max_day + 1)]
                 day.value = f"{current_day:02d}"
                 self.page.update()
 
+            year.on_select = update_days
+            month.on_select = update_days
+            day.on_select = sync_control_value
             year.on_change = update_days
             month.on_change = update_days
             update_days()
@@ -470,11 +474,24 @@ class BoardViewMixin:
             if update_page:
                 self.page.update()
 
-        def mark_card_dirty(_: ft.ControlEvent) -> None:
+        def mark_card_dirty(event: ft.ControlEvent) -> None:
+            sync_control_value(event)
+            control = getattr(event, "control", None)
+            if isinstance(control, ft.Checkbox):
+                event_value = getattr(event, "data", None)
+                if event_value is not None:
+                    control.value = (
+                        event_value
+                        if isinstance(event_value, bool)
+                        else str(event_value).lower() == "true"
+                    )
+            self.pause_polling()
             update_card_dirty_state(update_page=True)
 
         title.on_change = mark_card_dirty
         description.on_change = mark_card_dirty
+        assignee.on_select = mark_card_dirty
+        priority.on_select = mark_card_dirty
         assignee.on_change = mark_card_dirty
         priority.on_change = mark_card_dirty
         for checkbox in label_checks:

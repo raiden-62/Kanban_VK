@@ -163,6 +163,23 @@ class RecordingApi:
         return {"id": 1, "board_id": board_id, "title": title, "color": color}
 
 
+class DirtyDuringPollApi(RecordingApi):
+    def __init__(self, frontend: KanbanFrontend) -> None:
+        super().__init__()
+        self.frontend = frontend
+
+    def get_kanban(self, board_id: int) -> dict[str, Any]:
+        self.calls.append(("get_kanban", board_id))
+        self.frontend.card_panel_has_unsaved_changes = True
+        return {
+            "board": sample_board(),
+            "columns": [sample_column()],
+            "cards": [{**sample_card(), "title": "Polled old value"}],
+            "labels": [],
+            "members": [{"user": {"id": 1, "login": "user"}, "role": "editor"}],
+        }
+
+
 class FakeTestLoginApi:
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ...]] = []
@@ -272,6 +289,22 @@ def test_polling_skips_refresh_while_temporarily_paused() -> None:
     assert frontend.api.calls == []
 
 
+def test_polling_does_not_apply_result_if_card_becomes_dirty_during_request() -> None:
+    frontend = make_frontend("editor")
+    frontend.state.kanban["columns"] = [sample_column()]
+    frontend.state.kanban["cards"] = [sample_card()]
+    frontend.api = DirtyDuringPollApi(frontend)
+    renders: list[str] = []
+    frontend.render_board = lambda: renders.append("render")
+
+    frontend.poll_current_board_once()
+
+    assert frontend.api.calls == [("get_kanban", 1)]
+    assert frontend.state.kanban["cards"][0]["title"] == "Task"
+    assert renders == []
+    assert frontend.card_panel_has_unsaved_changes is True
+
+
 def test_polling_refreshes_open_board_when_no_field_is_focused() -> None:
     frontend = make_frontend("editor")
     frontend.api = RecordingApi()
@@ -356,7 +389,7 @@ def test_create_board_features_preset_seeds_columns() -> None:
     ][0]
     fields[0].value = "Roadmap"
     fields[1].value = "Product work"
-    preset.value = "features"
+    preset.on_select(FakeEvent(preset, data="features"))
     frontend.page.dialog.actions[1].on_click(None)
 
     assert frontend.api.calls == [
@@ -851,6 +884,46 @@ def test_card_panel_save_button_enables_for_text_changes() -> None:
     assert frontend.card_panel_has_unsaved_changes is False
 
 
+def test_card_panel_dropdown_change_uses_event_data_before_polling() -> None:
+    frontend = make_frontend("editor")
+    frontend.state.kanban["members"].append({"user": {"id": 2, "login": "member"}, "role": "viewer"})
+    frontend.page = FakePage()
+    frontend.api = RecordingApi()
+    frontend.load_comments_for_panel = lambda _: []
+    frontend.render_board = lambda: None
+
+    panel = frontend.card_panel(sample_card(), [], [], can_edit=True)
+    assignee = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.Dropdown) and control.label == "Исполнитель"
+    ][0]
+    priority = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.Dropdown) and control.label == "Приоритет"
+    ][0]
+    save_button = [
+        control
+        for control in walk(panel)
+        if isinstance(control, ft.Button) and control.content == "Сохранить"
+    ][0]
+
+    assignee.on_select(FakeEvent(assignee, data="2"))
+
+    assert assignee.value == "2"
+    assert save_button.disabled is False
+    assert frontend.card_panel_has_unsaved_changes is True
+
+    frontend.poll_current_board_once()
+    assert frontend.api.calls == []
+
+    priority.on_select(FakeEvent(priority, data="critical"))
+
+    assert priority.value == "critical"
+    assert frontend.card_panel_has_unsaved_changes is True
+
+
 def test_card_panel_saves_selected_assignee_from_dropdown() -> None:
     frontend = make_frontend("editor")
     frontend.state.kanban["members"].append({"user": {"id": 2, "login": "member"}, "role": "viewer"})
@@ -866,7 +939,7 @@ def test_card_panel_saves_selected_assignee_from_dropdown() -> None:
         for control in walk(panel)
         if isinstance(control, ft.Dropdown) and control.label == "Исполнитель"
     ][0]
-    assignee.value = "2"
+    assignee.on_select(FakeEvent(assignee, data="2"))
     calendar_button = [
         control
         for control in walk(panel)
